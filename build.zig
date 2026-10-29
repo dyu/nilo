@@ -5509,6 +5509,28 @@ pub fn build(b: *std.Build) void {
     }
     test_step.dependOn(test_zstd_step);
 
+    // nilo_fetch builds for a 32-bit target (no 64-bit atomics, 4-byte struct
+    // alignment): checks/arm32.zig compiled, not run. `zig build check-arm32`.
+    const check_arm32_step = b.step(
+        "check-arm32",
+        "Compile a program using nilo_fetch for arm-linux-musleabihf (32-bit, no 64-bit atomics); not run",
+    );
+    {
+        const arm32 = b.resolveTargetQuery(.{ .cpu_arch = .arm, .os_tag = .linux, .abi = .musleabihf });
+        const core_mod = coreFor(b, arm32, .ReleaseSafe);
+        const root = b.createModule(.{
+            .root_source_file = b.path("checks/arm32.zig"),
+            .target = arm32,
+            .optimize = .ReleaseSafe,
+            .single_threaded = true,
+            .imports = &.{
+                .{ .name = "nilo_core", .module = core_mod },
+                .{ .name = "nilo_fetch", .module = fetchFor(b, arm32, .ReleaseSafe, core_mod) },
+            },
+        });
+        check_arm32_step.dependOn(&b.addExecutable(.{ .name = "arm32-check", .root_module = root }).step);
+    }
+
     // The Fitting layer's entry condition, as something that runs (ADR 061).
     // A Tool module proves its layer under a plain `zig test`; a Fitting
     // borrows the loop, so it proves its own under `std.Io.Threaded` — std's,

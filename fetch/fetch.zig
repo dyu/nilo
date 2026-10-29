@@ -1099,7 +1099,7 @@ pub const Exchange = struct {
     /// clock: the moment `begin` ran until the first chunk lands. Atomic
     /// because with no Engine the reading task writes it and the waiting
     /// caller reads it.
-    last_byte: std.atomic.Value(i64) = .init(0),
+    last_byte: std.atomic.Value(u32) = .init(0),
     /// Whether silence is what stopped the call: the engineless half.
     stalled: bool = false,
     /// Under an Engine there is one timer, and this says which of the two
@@ -1344,7 +1344,7 @@ pub const Exchange = struct {
         }
 
         fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
-            const self: *Upload = @fieldParentPtr("out", w);
+            const self: *Upload = @alignCast(@fieldParentPtr("out", w));
             const to = self.sink();
             var n: usize = 0;
             for (data[0 .. data.len - 1]) |piece| {
@@ -1360,7 +1360,7 @@ pub const Exchange = struct {
         }
 
         fn flushAll(w: *std.Io.Writer) std.Io.Writer.Error!void {
-            const self: *Upload = @fieldParentPtr("out", w);
+            const self: *Upload = @alignCast(@fieldParentPtr("out", w));
             try self.sink().flush();
             if (self.spare != null) try self.body.writer.flush();
             // std ends a chunk with its `\r\n` when the next write begins,
@@ -1602,7 +1602,7 @@ pub const Exchange = struct {
         // shorter wins; zero is no limit at either end (ADR 105).
         const ms = if (route_left_ms) |left| (if (own_ms == 0) left else @min(own_ms, left)) else own_ms;
         self.stall_ms = opts.stall_ms orelse client.settings.stall_ms;
-        self.last_byte.store(core.monotonicMicros(), .release);
+        self.last_byte.store(@truncate(@as(u64, @bitCast(core.monotonicMicros()))), .release);
         if (client.limits.engineless()) {
             if (ms != 0) self.deadline_us = core.monotonicMicros() + @as(i64, ms) * std.time.us_per_ms;
         } else if (self.stall_ms != 0) {
@@ -2040,7 +2040,7 @@ pub const Exchange = struct {
     /// the timer re-armed; without one it is a word the waiter in `bounded`
     /// reads.
     pub fn mark(self: *Exchange) void {
-        self.last_byte.store(core.monotonicMicros(), .release);
+        self.last_byte.store(@truncate(@as(u64, @bitCast(core.monotonicMicros()))), .release);
         if (!self.client.limits.engineless()) self.armNearer();
     }
 
@@ -3103,7 +3103,8 @@ pub const Exchange = struct {
                 wait = @min(wait, left);
             }
             if (self.stall_ms != 0) {
-                const left = self.last_byte.load(.acquire) + @as(i64, self.stall_ms) * std.time.us_per_ms - now;
+                const quiet: i64 = @as(u32, @truncate(@as(u64, @bitCast(now)))) -% self.last_byte.load(.acquire);
+                const left = @as(i64, self.stall_ms) * std.time.us_per_ms - quiet;
                 if (left <= 0) {
                     self.stalled = true;
                     return future.cancel(io);
@@ -3305,7 +3306,7 @@ pub const Exchange = struct {
         self.stopClocks();
         if (ms == 0) return;
         self.stall_ms = ms;
-        self.last_byte.store(core.monotonicMicros(), .release);
+        self.last_byte.store(@truncate(@as(u64, @bitCast(core.monotonicMicros()))), .release);
         if (!self.client.limits.engineless()) self.armNearer();
     }
 
